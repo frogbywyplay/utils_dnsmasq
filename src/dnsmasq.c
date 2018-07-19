@@ -84,7 +84,7 @@ int main (int argc, char **argv)
   sigact.sa_handler = SIG_IGN;
   sigaction(SIGPIPE, &sigact, NULL);
 
-  umask(022); /* known umask, create leases and pid files as 0644 */
+  umask(0177); /* known umask, create leases and pid files as 0600 */
  
   rand_init(); /* Must precede read_opts() */
   
