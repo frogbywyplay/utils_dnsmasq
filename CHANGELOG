@@ -2346,3 +2346,6 @@ version 2.43
 version 2.42
 	The changelog for version 2.42 and earlier is 
 	available in CHANGELOG.archive.
+2.79.1 -- 19/07/2018
+- Fixed umask to 0177 (security requirement).
+
