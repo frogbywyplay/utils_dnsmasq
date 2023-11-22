@@ -214,8 +214,9 @@ static int forward_query(int udpfd, union mysockaddr *udpaddr,
 					   FREC_HAS_PHEADER | FREC_DNSKEY_QUERY | FREC_DS_QUERY | FREC_NO_CACHE)))
     {
       struct frec_src *src;
-      
-      for (src = &forward->frec_src; src; src = src->next)
+      int src_count;
+     
+      for (src_count = 0, src = &forward->frec_src; src; src_count++, src = src->next)
 	if (src->orig_id == ntohs(header->id) && 
 	    sockaddr_isequal(&src->source, udpaddr))
 	  break;
@@ -230,33 +231,48 @@ static int forward_query(int udpfd, union mysockaddr *udpaddr,
 	{
 	  /* Existing query, but from new source, just add this 
 	     client to the list that will get the reply.*/
-	  
-	  /* Note whine_malloc() zeros memory. */
-	  if (!daemon->free_frec_src &&
-	      daemon->frec_src_count < daemon->ftabsize &&
-	      (daemon->free_frec_src = whine_malloc(sizeof(struct frec_src))))
+
+	  /* If we've been spammed with too many duplicates, replace the oldest
+	     query with the new one, to avoid the obvious DoS. */
+	  if (src_count >= CLIENT_LIMIT)
 	    {
-	      daemon->frec_src_count++;
-	      daemon->free_frec_src->next = NULL;
+	      struct frec_src *victim;
+	      
+	      for (src = &forward->frec_src; src->next && src->next->next; src = src->next);
+	      victim = src->next;
+	      src->next = NULL;
+	      src = victim;
 	    }
-	  
-	  /* If we've been spammed with many duplicates, return REFUSED. */
-	  if (!daemon->free_frec_src)
+	  else
 	    {
-	      query_full(now, NULL);
-	      /* This is tricky; if we're blasted with the same query
-		 over and over, we'll end up taking this path each time
-		 and never resetting until the frec gets deleted by
-		 aging followed by the receipt of a different query. This
-		 is a bit of a DoS vuln. Avoid by explicitly deleting the
-		 frec once it expires. */
-	      if (difftime(now, forward->time) >= TIMEOUT)
-		free_frec(forward);
-	      goto reply;
+	      /* Note whine_malloc() zeros memory. */
+	      if (!daemon->free_frec_src &&
+		  daemon->frec_src_count < daemon->ftabsize &&
+		  (daemon->free_frec_src = whine_malloc(sizeof(struct frec_src))))
+		{
+		  daemon->frec_src_count++;
+		  daemon->free_frec_src->next = NULL;
+		}
+	      
+	      /* Limit size of frec_src pool, return REFUSED if it overflows. */
+	      if (!daemon->free_frec_src)
+		{
+		  query_full(now, NULL);
+		  /* This is tricky; if we're blasted with the same query
+		     over and over, we'll end up taking this path each time
+		     and never resetting until the frec gets deleted by
+		     ageing followed by the receipt of a different query. This
+		     is a bit of a DoS vuln. Avoid by explicitly deleting the
+		     frec once it expires. */
+		  if (difftime(now, forward->time) >= TIMEOUT)
+		    free_frec(forward);
+		  goto reply;
+		}
+	      
+	      src = daemon->free_frec_src;
+	      daemon->free_frec_src = src->next;
 	    }
-	  
-	  src = daemon->free_frec_src;
-	  daemon->free_frec_src = src->next;
+
 	  src->next = forward->frec_src.next;
 	  forward->frec_src.next = src;
 	  src->orig_id = ntohs(header->id);
